@@ -8,7 +8,6 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -47,66 +46,80 @@ export default function AttendanceScreen() {
     setStudents(parsed);
   };
 
+  const loadAttendanceForDate = async (batchId, selectedDate) => {
+    const stored = await AsyncStorage.getItem('attendance');
+    const data = stored ? JSON.parse(stored) : {};
+    const saved = data?.[batchId]?.[selectedDate] || [];
+
+    const filtered = students.filter(s => s.batch === batchId);
+
+    const mapped = filtered.map(student => {
+      const found = saved.find(a => a._id === student._id);
+      return {
+        student,
+        status: found ? found.status : '',
+      };
+    });
+
+    setRows(mapped);
+  };
+
   useEffect(() => {
     loadBatches();
     loadStudents();
   }, []);
 
   useEffect(() => {
-    if (!selectedBatch) return;
-
-    const filteredStudents = students.filter((s) => s.batch === selectedBatch);
-
-    setRows(
-      filteredStudents.map((s) => ({
-        student: s,
-        status: 'PRESENT', // default status
-        remarks: '',
-      }))
-    );
-  }, [selectedBatch, students]);
+    if (selectedBatch && students.length) {
+      loadAttendanceForDate(selectedBatch, date);
+    }
+  }, [selectedBatch, students, date]);
 
   const updateRow = (studentId, status) => {
-    setRows((current) =>
-      current.map((row) =>
+    setRows(current =>
+      current.map(row =>
         row.student._id === studentId ? { ...row, status } : row
       )
     );
   };
 
   const handleDateChange = (event, selectedDate) => {
-    if (Platform.OS === 'android') {
-      setShowDatePicker(false);
-    }
+    if (Platform.OS === 'android') setShowDatePicker(false);
     if (selectedDate) {
-      const formattedDate = selectedDate.toISOString().split('T')[0];
-      setDate(formattedDate);
+      const formatted = selectedDate.toISOString().split('T')[0];
+      setDate(formatted);
     }
   };
 
   const handleSave = async () => {
     setSaving(true);
 
-    const storedAttendance = await AsyncStorage.getItem('attendance');
-    const parsedAttendance = storedAttendance ? JSON.parse(storedAttendance) : {};
+    const stored = await AsyncStorage.getItem('attendance');
+    const parsed = stored ? JSON.parse(stored) : {};
 
-    parsedAttendance[selectedBatch] = parsedAttendance[selectedBatch] || {};
-    parsedAttendance[selectedBatch][date] = rows.map((r) => ({
+    parsed[selectedBatch] = parsed[selectedBatch] || {};
+    parsed[selectedBatch][date] = rows.map(r => ({
       _id: r.student._id,
       name: r.student.name,
       rollNumber: r.student.rollNumber,
-      status: r.status,
+      status: r.status || '',
     }));
 
-    await AsyncStorage.setItem('attendance', JSON.stringify(parsedAttendance));
+    await AsyncStorage.setItem('attendance', JSON.stringify(parsed));
     setSaving(false);
-    alert('Attendance saved!');
+    alert('Attendance saved');
+  };
+
+  const clearAttendance = async () => {
+    await AsyncStorage.removeItem('attendance');
+    alert('Attendance records cleared');
+    loadAttendanceForDate(selectedBatch, date);
   };
 
   const summary = useMemo(() => {
     return rows.reduce(
       (acc, row) => {
-        acc[row.status] = (acc[row.status] || 0) + 1;
+        if (row.status) acc[row.status] = acc[row.status] + 1;
         return acc;
       },
       { PRESENT: 0, ABSENT: 0, LATE: 0 }
@@ -121,45 +134,29 @@ export default function AttendanceScreen() {
 
       <View style={styles.filters}>
         <View style={styles.pickerWrapper}>
-          <Picker
-            selectedValue={selectedBatch}
-            onValueChange={setSelectedBatch}
-            style={styles.picker}
-          >
-            {batches.map((batch) => (
+          <Picker selectedValue={selectedBatch} onValueChange={setSelectedBatch} style={styles.picker}>
+            {batches.map(batch => (
               <Picker.Item key={batch._id} label={batch.name} value={batch._id} />
             ))}
           </Picker>
         </View>
 
-        <TouchableOpacity
-          style={styles.datePickerButton}
-          onPress={() => setShowDatePicker(true)}
-        >
+        <TouchableOpacity style={styles.datePickerButton} onPress={() => setShowDatePicker(true)}>
           <Text style={styles.datePickerButtonText}>{date}</Text>
         </TouchableOpacity>
-
-        {showDatePicker && (
-          <DateTimePicker
-            value={new Date(date)}
-            mode="date"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={handleDateChange}
-            onTouchCancel={() => setShowDatePicker(false)}
-          />
-        )}
-        {Platform.OS === 'ios' && showDatePicker && (
-          <TouchableOpacity
-            style={styles.datePickerDone}
-            onPress={() => setShowDatePicker(false)}
-          >
-            <Text style={styles.datePickerDoneText}>Done</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
+      {showDatePicker && (
+        <DateTimePicker
+          value={new Date(date)}
+          mode="date"
+          display="default"
+          onChange={handleDateChange}
+        />
+      )}
+
       <View style={styles.summaryRow}>
-        {STATUS_OPTIONS.map((option) => (
+        {STATUS_OPTIONS.map(option => (
           <View key={option.key} style={[styles.summaryCard, { borderColor: option.color }]}>
             <Text style={styles.summaryValue}>{summary[option.key]}</Text>
             <Text style={[styles.summaryLabel, { color: option.color }]}>{option.label}</Text>
@@ -172,12 +169,9 @@ export default function AttendanceScreen() {
       ) : (
         <FlatList
           data={rows}
-          keyExtractor={(item) => item.student._id}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={loadBatches} />}
+          keyExtractor={item => item.student._id}
           contentContainerStyle={{ paddingBottom: 100 }}
-          ListEmptyComponent={
-            <Text style={styles.emptyState}>No students found for this batch.</Text>
-          }
+          ListEmptyComponent={<Text style={styles.emptyState}>No students found.</Text>}
           renderItem={({ item }) => (
             <View style={styles.row}>
               <View>
@@ -185,7 +179,7 @@ export default function AttendanceScreen() {
                 <Text style={styles.meta}>Roll #{item.student.rollNumber || '-'}</Text>
               </View>
               <View style={styles.statusGroup}>
-                {STATUS_OPTIONS.map((option) => (
+                {STATUS_OPTIONS.map(option => (
                   <TouchableOpacity
                     key={option.key}
                     style={[
@@ -216,6 +210,10 @@ export default function AttendanceScreen() {
       <TouchableOpacity style={styles.saveButton} onPress={handleSave} disabled={saving}>
         <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save Attendance'}</Text>
       </TouchableOpacity>
+
+      <TouchableOpacity style={styles.clearButton} onPress={clearAttendance}>
+        <Text style={styles.clearButtonText}>Clear Attendance Records</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -223,7 +221,7 @@ export default function AttendanceScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f9f7ff',
+    backgroundColor: '#f5f9f7',
     padding: 16,
   },
   backButton: {
@@ -246,45 +244,24 @@ const styles = StyleSheet.create({
   },
   pickerWrapper: {
     flex: 1,
-    backgroundColor: '#126835ff',
+    backgroundColor: '#126835',
     borderRadius: 14,
   },
   picker: {
-    color: '#fafef9ff',
-  },
-  input: {
-    width: 150,
-    backgroundColor: '#0f6330ff',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    color: '#eef0eaff',
+    color: '#fafef9',
   },
   datePickerButton: {
     width: 150,
-    backgroundColor: '#0f6330ff',
+    backgroundColor: '#0f6330',
     borderRadius: 14,
-    paddingHorizontal: 14,
     paddingVertical: 12,
     justifyContent: 'center',
     alignItems: 'center',
   },
   datePickerButtonText: {
-    color: '#eef0eaff',
+    color: '#eef0ea',
     fontSize: 16,
     fontWeight: '600',
-  },
-  datePickerDone: {
-    backgroundColor: '#22c55e',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    marginTop: 12,
-  },
-  datePickerDoneText: {
-    color: '#14532d',
-    fontWeight: '700',
-    fontSize: 16,
-    textAlign: 'center',
   },
   summaryRow: {
     flexDirection: 'row',
@@ -300,7 +277,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#166534',
   },
   summaryValue: {
-    color: '#f1f3ecff',
+    color: '#f1f3ec',
     fontSize: 22,
     fontWeight: '700',
   },
@@ -314,10 +291,9 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#239d51ff',
+    borderColor: '#239d51',
   },
   name: {
     color: '#d9f99d',
@@ -325,7 +301,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   meta: {
-    color: '#d9f9deff',
+    color: '#d9f9de',
     marginTop: 2,
   },
   statusGroup: {
@@ -335,12 +311,12 @@ const styles = StyleSheet.create({
   statusButton: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#e3f6eaff',
     paddingVertical: 6,
     paddingHorizontal: 12,
+    borderColor: '#e3f6ea',
   },
   statusLabel: {
-    color: '#ddf6e0ff',
+    color: '#ddf6e0',
     fontWeight: '600',
   },
   emptyState: {
@@ -354,7 +330,7 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: 'center',
     position: 'absolute',
-    bottom: 32,
+    bottom: 80,
     left: 16,
     right: 16,
   },
@@ -362,5 +338,20 @@ const styles = StyleSheet.create({
     color: '#14532d',
     fontWeight: '700',
     fontSize: 16,
+  },
+  clearButton: {
+    backgroundColor: '#dc2626',
+    borderRadius: 18,
+    padding: 14,
+    alignItems: 'center',
+    position: 'absolute',
+    bottom: 20,
+    left: 16,
+    right: 16,
+  },
+  clearButtonText: {
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 15,
   },
 });
